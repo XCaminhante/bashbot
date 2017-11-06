@@ -20,10 +20,10 @@
 # SOFTWARE.
 
 [ -r bashbot.config ] || cat >bashbot.config <<-EOF
-	nick=bashbot
-	server=irc.freenode.net
-	port=6667
-	chans=( "#bottest" )
+   nick=bashbot
+   server=irc.freenode.net
+   port=6667
+   chans=( "#asm" )
 EOF
 
 source bashbot.config
@@ -99,9 +99,9 @@ exec 3<>/dev/tcp/$server/$port || { echo "Could not connect"; exit 1; }
 send "NICK $nick"
 send "USER $nick 0 * :bashbot"
 
-for chan in "${chans[@]}"; do
-   send "JOIN :$chan"
-done
+#~ for chan in "${chans[@]}"; do
+   #~ send "JOIN :$chan"
+#~ done
 
 CHANNEL=
 NAME=
@@ -133,21 +133,27 @@ while read -r line; do
       ;;
    "PRIVMSG $nick :"*)
       # private message to bot
-      CHANNEL=$NAME
+      CHANNEL="$NAME"
       prefix="PRIVMSG $NAME "
       set -- "${3#:}" "${@:4}"
       ;;
    "PRIVMSG "*" :$nick: "*)
-      CHANNEL=$2
+      CHANNEL="$2"
       prefix="PRIVMSG $CHANNEL :$NAME"
       set -- "${@:4}"
       ;;
    "PRIVMSG "*" :"*)
-      CHANNEL=$2
+      CHANNEL="$2"
       run_filters "${3#:}" "${@:4}" | while IFS= read -r line; do
          send "PRIVMSG $CHANNEL :$line"
       done&
       continue
+      ;;
+   # The bot was sending commands too early, it must wait the 005 server apresentation line
+   "005 $nick "*)
+      for chan in "${chans[@]}"; do
+         send "JOIN :$chan"
+      done
       ;;
    *)
       continue
@@ -173,10 +179,10 @@ while read -r line; do
       continue
    elif [ -x "commands/$cmd" ]; then
       "commands/$cmd" "$@"
-   else
-      "commands/insult"
+   #~ else
+      #~ "commands/insult"
    fi | while IFS= read -r line; do
-      send "$prefix:$line"
+      send "$prefix: $line"
    done&
 
 done <&3
