@@ -19,11 +19,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+initialized=false
+
 [ -r bashbot.config ] || cat >bashbot.config <<-EOF
    nick=bashbot
-   server=irc.freenode.net
+   realname=bashbot
+   server=irc.libera.chat
    port=6667
    chans=( "#asm" )
+   adminpassword=12345678
+   function bashbot_start { for chan in "${chans[@]}"; do send "JOIN :$chan"; done true; }
+   function bashbot_stop { false; }
 EOF
 
 source bashbot.config
@@ -64,14 +70,33 @@ reload_filters
 declare -A builtin_commands
 
 bashbot_args=("$0" "$@")
-builtin_reload()
-{
-   wait
-   send "QUIT :reloading"
-   exec 3>&-
-   exec "${bashbot_args[@]}"
+function builtin_reload {
+   if [ "$1" == "$adminpassword" ]; then
+      wait
+      send "QUIT :reloading"
+      exec 3>&-
+      exec "${bashbot_args[@]}"
+   fi
 }
-builtin_commands[reload]=builtin_reload
+
+function builtin_start {
+   if ! bashbot_start; then
+      echo "bashbot_start() failed"
+      send "QUIT :bashbot_start() failed"
+      exit 1
+   fi
+}
+
+function builtin_stop {
+   if [ "$1" == "$adminpassword" ]; then
+      if bashbot_stop $@; then
+         wait
+         send "QUIT :full bot stop"
+         rm bashbot.pid
+         exit 1
+      fi
+   fi
+}
 
 builtin_filters()
 {
@@ -97,16 +122,13 @@ trap 'builtin_reload' SIGHUP
 exec 3<>/dev/tcp/$server/$port || { echo "Could not connect"; exit 1; }
 
 send "NICK $nick"
-send "USER $nick 0 * :bashbot"
-
-#~ for chan in "${chans[@]}"; do
-   #~ send "JOIN :$chan"
-#~ done
+send "USER $nick 0 * :$realname"
 
 CHANNEL=
 NAME=
+HOST=
 BOTNICK=$nick
-export CHANNEL NAME BOTNICK
+export CHANNEL NAME HOST BOTNICK
 
 while read -r line; do
 
@@ -120,6 +142,7 @@ while read -r line; do
    :*)
       # turn: :nickname!example.host.com
       # into: nickname
+      HOST=${1##*!}
       NAME=${1%%!*}
       NAME=${NAME#:}
       shift
@@ -131,7 +154,7 @@ while read -r line; do
       send "PONG $2"
       continue
       ;;
-   "PRIVMSG $nick :"*)
+   "PRIVMSG $nick :"*|"PRIVMSG $nick@$servername :"*)
       # private message to bot
       CHANNEL="$NAME"
       prefix="PRIVMSG $NAME "
@@ -151,9 +174,10 @@ while read -r line; do
       ;;
    # The bot was sending commands too early, it must wait the 005 server apresentation line
    "005 $nick "*)
-      for chan in "${chans[@]}"; do
-         send "JOIN :$chan"
-      done
+      if ! $initialized; then
+         builtin_start
+         initialized=true
+      fi
       ;;
    *)
       continue
@@ -171,6 +195,9 @@ while read -r line; do
       builtin_reload "$@"
       continue
       ;;
+   stop)
+      builtin_stop "$@"
+      ;;
    esac
 
    # note, builtin commands run in-process
@@ -182,7 +209,7 @@ while read -r line; do
    #~ else
       #~ "commands/insult"
    fi | while IFS= read -r line; do
-      send "$prefix: $line"
+      send "$prefix:$line"
    done&
 
 done <&3

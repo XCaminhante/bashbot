@@ -2,7 +2,7 @@
 filter_keyword()
 {
    local -A keywords=(
-      [$BOTNICK]="you said my name! - you can find my source @ https://github.com/joshcartwright/bashbot"
+      [$BOTNICK]="you said my name! - you can find my source @ https://github.com/XCaminhante/bashbot"
       [bot]="I am bot.  Hear me rawwrr."
    )
 
