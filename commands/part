@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
+[ -z "$1" ] && { echo "usage: /part <channel>"; exit 1; }
 [ -n "$1" ] && CHANNEL=$1
-
 send "PART $CHANNEL"

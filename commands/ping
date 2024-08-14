@@ -1,2 +1,2 @@
-#!/usr/bin/env bash
-echo "pong"
+#!/bin/bash
+echo "pong!"

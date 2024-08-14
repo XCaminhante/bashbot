@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
+#@+leo-ver=5-thin
+#@+node:caminhante.20240809173341.2: * @file bashbot
+#@@first
 # Copyright (C) 2012 Josh Cartwright <joshc@linux.com>
+# Copyright (C) 2024 X Caminhante <xcaminhante@i2pmail.org>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -18,198 +22,268 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+#@@language shell
+#@+others
+#@+node:caminhante.20240809180726.1: ** /constants
+if [ "$USER" == "root" ]; then
+  USER=pi
+fi
+CONFIG_DIR="/home/${USER}/.config/bashbot"
+CONFIG_FILE="${CONFIG_DIR}/bashbot.conf"
+PID_FILE="${CONFIG_DIR}/bashbot.pid"
+CMD_DIR="$(dirname "$0")"
+#@+node:caminhante.20240809174451.1: ** /vars
 initialized=false
-
-[ -r bashbot.config ] || cat >bashbot.config <<-EOF
-   nick=bashbot
-   realname=bashbot
-   server=irc.libera.chat
-   port=6667
-   chans=( "#asm" )
-   adminpassword=12345678
-   function bashbot_start { for chan in "${chans[@]}"; do send "JOIN :$chan"; done true; }
-   function bashbot_stop { false; }
-EOF
-
-source bashbot.config
-
-# Basic helpers for communication with via IRC protocol
-recv() { echo "< $@" >&2; }
-send() { echo "> $@" >&2;
-         printf "%s\r\n" "$@" >&3; }
-export -f send
-
 declare -A filters
-reload_filters() {
-   for i in "${!filters[@]}"; do
-      unset "filters[$i]"
-   done
-   for f in filters/*; do
-      source "$f"
-   done
-}
-
-filter() {
-   filters["$1"]+="${@:2}"
-}
-export -f filter
-
-run_filters() {
-   for f in "${!filters[@]}"; do
-      if [[ "$@" =~ $f ]]; then
-         for func in ${filters[$f]}; do
-            $func "${BASH_REMATCH[@]}"
-         done
-      fi
-   done
-}
-
-reload_filters
-
 declare -A builtin_commands
-
 bashbot_args=("$0" "$@")
-function builtin_reload {
-   if [ "$1" == "$adminpassword" ]; then
-      wait
-      send "QUIT :reloading"
-      exec 3>&-
-      exec "${bashbot_args[@]}"
-   fi
-}
-
-function builtin_start {
-   if ! bashbot_start; then
-      echo "bashbot_start() failed"
-      send "QUIT :bashbot_start() failed"
-      exit 1
-   fi
-}
-
-function builtin_stop {
-   if [ "$1" == "$adminpassword" ]; then
-      if bashbot_stop $@; then
-         wait
-         send "QUIT :full bot stop"
-         rm bashbot.pid
-         exit 1
-      fi
-   fi
-}
-
-builtin_filters()
-{
-   echo "active filters:";
-   for f in "${!filters[@]}"; do
-      printf "%-20s: %s\n" "$f" "${filters[$f]}"
-   done
-}
-builtin_commands[filters]=builtin_filters
-
-builtin_list()
-{
-   echo -n "available commands: ${!builtin_commands[@]} "
-   (cd commands; echo *;)
-}
-builtin_commands[list]=builtin_list
-
-# We'll also allow for SIGHUP to reload bashbot.  Useful for git hooks.
-[ -e bashbot.pid ] && rm bashbot.pid
-echo $$ >bashbot.pid
-trap 'builtin_reload' SIGHUP
-
-exec 3<>/dev/tcp/$server/$port || { echo "Could not connect"; exit 1; }
-
-send "NICK $nick"
-send "USER $nick 0 * :$realname"
-
+killswitch_pid=
+killswitch_ping_pid=
+#@+node:caminhante.20240809175010.1: *3* /decoded message vars
 CHANNEL=
 NAME=
 HOST=
-BOTNICK=$nick
-export CHANNEL NAME HOST BOTNICK
+LINE=
+export CHANNEL NAME HOST LINE
+#@+node:caminhante.20240809175441.1: ** /functions
+#@+node:caminhante.20240809174609.1: *3* /builtins
+#@+node:caminhante.20240809193756.1: *4* function bashbot_kill
+function bashbot_kill {
+  wait
+  local pid=$(head "$PID_FILE")
+  rm "$PID_FILE"
+  kill -SIGKILL $pid
+}
+#@+node:caminhante.20240809180026.1: *4* function bashbot_reload
+function bashbot_reload {
+  killswitch_stop
+  wait
+  send "QUIT :reloading"
+  exec 3>&-
+  rm -f "$PID_FILE"
+  exec "${bashbot_args[@]}"
+}
+#@+node:caminhante.20240809182040.1: *4* function bashbot_stop
+function bashbot_stop {
+  killswitch_stop
+  wait
+  send "QUIT :full bot stop"
+  rm "$PID_FILE"
+  exit 1
+}
+#@+node:caminhante.20240809175722.1: *4* function builtin_filters
+function builtin_filters {
+  echo "active filters:";
+  for f in "${!filters[@]}"; do
+    printf "%-30s: %s\n" "$f" "${filters[$f]}"
+  done
+}
+builtin_commands[filters]=builtin_filters
+#@+node:caminhante.20240809175758.1: *4* function builtin_list
+function builtin_list {
+  echo -n "available commands: reload stop ${!builtin_commands[@]} "
+  (cd "${CMD_DIR}/commands/"; echo *;)
+}
+builtin_commands[list]=builtin_list
+#@+node:caminhante.20240809175640.1: *4* function builtin_reload
+function builtin_reload {
+  bashbot_reload
+}
+#@+node:caminhante.20240809175659.1: *4* function builtin_start
+function builtin_start {
+  if ! bot_start; then
+    echo "bot_start() failed"
+    send "QUIT :bot_start() failed"
+    exit 1
+  fi
+}
+#@+node:caminhante.20240809175708.1: *4* function builtin_stop
+function builtin_stop {
+  if bot_stop; then
+    bashbot_stop
+  fi
+}
+#@+node:caminhante.20240809174537.1: *3* /filters
+#@+node:caminhante.20240809175844.1: *4* function filter
+function filter {
+  filters["$1"]+="${@:2}"
+}
+export -f filter
+#@+node:caminhante.20240809175837.1: *4* function reload_filters
+function reload_filters {
+  for i in "${!filters[@]}"; do
+    unset "filters[$i]"
+  done
+  for f in "${CMD_DIR}/filters/"*; do
+    source "$f"
+  done
+}
+#@+node:caminhante.20240809175857.1: *4* function run_filters
+function run_filters {
+  for f in "${!filters[@]}"; do
+    if [[ "$@" =~ $f ]]; then
+      for func in ${filters[$f]}; do
+        $func "${BASH_REMATCH[@]}"
+      done
+    fi
+  done
+}
+#@+node:caminhante.20240809174514.1: *3* /recv and send
+function recv { echo "< $@" >&2; }
+function send { echo "> $@" >&2; printf "%s\r\n" "$@" | cut -b1-510 >&3; }
+export -f send
+#@+node:caminhante.20240809190104.1: *3* /killswitch
+#@+node:caminhante.20240809190147.1: *4* function killswitch_start
+function killswitch_start {
+  killswitch_stop
+  if [ initialized ]; then
+    ( shell_sleep 10; send "PING :${HOST}"; )&
+    killswitch_ping_pid=${!}
+    ( shell_sleep $killswitch_timer && bashbot_kill; )&
+    killswitch_pid=${!}
+  fi
+}
+#@+node:caminhante.20240809190518.1: *4* function killswitch_stop
+function killswitch_stop {
+  [ ! -z $killswitch_ping_pid ] && kill -SIGTERM $killswitch_ping_pid 2>/dev/null
+  [ ! -z $killswitch_pid ] && kill -SIGTERM $killswitch_pid 2>/dev/null
+}
+#@+node:caminhante.20240213125451.1: *3* function shell_sleep
+function shell_sleep {
+  exec 5<>wait
+  read -u5 -t $1
+}
+#@+node:caminhante.20240809174501.1: ** /setup
+#@+node:caminhante.20240809185805.1: *3* /wait
+# Used by function shell_sleep to avoid running a sleep subprocess
+[ -p wait ] || { rm -f wait; mkfifo wait; }
+#@+node:caminhante.20240809181316.1: *3* /general traps
+trap 'echo "[ERROR]: ${BASH_SOURCE}:${LINENO}:${FUNCNAME:-}"' ERR
+trap 'bashbot_stop' INT TERM
+#@+node:caminhante.20240809174839.1: *4* /reload setup
+[ -e "$PID_FILE" ] && bashbot_kill
+echo $$ >"$PID_FILE"
+trap 'builtin_reload' SIGHUP
+#@+node:caminhante.20240809175510.1: *3* /configuration file
+[ -d "$CONFIG_DIR" ] || mkdir -pv "$CONFIG_DIR"
+[ -r "$CONFIG_FILE" ] || cat >"$CONFIG_FILE" <<-EOF
+nick=bashbot
+realname=bashbot
+server=localhost
+port=6667
+chans=( "#lounge" )
+function bot_start { for chan in "\${chans[@]}"; do send "JOIN :\$chan"; done; true; }
+function bot_stop { true; }
+killswitch_timer=30 #seconds
+EOF
 
-while read -r line; do
+source "$CONFIG_FILE"
+export nick realname server port
 
-   # strip trailing carriage return
-   line=${line%%$'\r'}
-
-   recv "$line"
-   set -- $line
-
-   case "$1" in
-   :*)
-      # turn: :nickname!example.host.com
-      # into: nickname
-      HOST=${1##*!}
-      NAME=${1%%!*}
-      NAME=${NAME#:}
-      shift
-      ;;
-   esac
-
-   case "$@" in
-   "PING "*)
-      send "PONG $2"
-      continue
-      ;;
-   "PRIVMSG $nick :"*|"PRIVMSG $nick@$servername :"*)
-      # private message to bot
-      CHANNEL="$NAME"
-      prefix="PRIVMSG $NAME "
-      set -- "${3#:}" "${@:4}"
-      ;;
-   "PRIVMSG "*" :$nick: "*)
-      CHANNEL="$2"
-      prefix="PRIVMSG $CHANNEL :$NAME"
-      set -- "${@:4}"
-      ;;
-   "PRIVMSG "*" :"*)
-      CHANNEL="$2"
-      run_filters "${3#:}" "${@:4}" | while IFS= read -r line; do
-         send "PRIVMSG $CHANNEL :$line"
-      done&
-      continue
-      ;;
-   # The bot was sending commands too early, it must wait the 005 server apresentation line
-   "005 $nick "*)
-      if ! $initialized; then
-         builtin_start
-         initialized=true
-      fi
-      ;;
-   *)
-      continue
-      ;;
-   esac
-
-   # prevent tricky commands like '../../../shutdown'
-   cmd=${1##*/}
-   shift
-
-   # reload is handled specially.  we can't leave the | while read subshell
-   # hangin' during re-exec, or it will be orphaned
-   case "$cmd" in
-   reload)
-      builtin_reload "$@"
-      continue
-      ;;
-   stop)
-      builtin_stop "$@"
-      ;;
-   esac
-
-   # note, builtin commands run in-process
-   if [ -n "${builtin_commands[$cmd]}" ]; then
-      "${builtin_commands[$cmd]}" "$@"
-      continue
-   elif [ -x "commands/$cmd" ]; then
-      "commands/$cmd" "$@"
-   #~ else
-      #~ "commands/insult"
-   fi | while IFS= read -r line; do
-      send "$prefix:$line"
-   done&
-
+#@+node:caminhante.20240809175621.1: *3* /filters
+reload_filters
+#@+node:caminhante.20240809174912.1: *3* /start the IRC connection
+exec 3<>/dev/tcp/$server/$port || { echo "Could not connect"; exit 1; }
+send "NICK $nick"
+# send "USER $nick 0 * :$realname"
+send "USER $nick +B * :$realname"
+#@+node:caminhante.20240809174954.1: ** /main loop
+while read -r LINE; do
+  #@+others
+  #@+node:caminhante.20240809183547.1: *3* /IRC line received
+  # strip trailing carriage return
+  LINE=${LINE%%$'\r'}
+  recv "$LINE"
+  set -- $LINE
+  #@+node:caminhante.20240809183503.1: *3* /strip the hostname
+  case "$1" in
+  :*)
+    # turn: :nickname!example.host.com
+    # into: nickname
+    HOST=${1##*!}
+    HOST=${HOST#:}
+    NAME=${1%%!*}
+    NAME=${NAME#:}
+    shift
+    ;;
+  esac
+  #@+node:caminhante.20240809183444.1: *3* /IRC decoding logic
+  case "$@" in
+  "PING "*)
+    killswitch_start
+    send "PONG $2"
+    continue
+    ;;
+  # private message to bot
+  "PRIVMSG $nick :"*|"PRIVMSG $nick@$HOST :"*)
+    killswitch_start
+    CHANNEL="$NAME"
+    prefix="PRIVMSG $NAME :"
+    set -- "${3#:}" "${@:4}"
+    ;;
+  # channel message, direct mention
+  "PRIVMSG "*" :$nick: "*)
+    killswitch_start
+    CHANNEL="$2"
+    prefix="PRIVMSG $CHANNEL :$NAME: "
+    set -- "${@:4}"
+    ;;
+  # channel message, indirect mention
+  "PRIVMSG "*" :bots: "*)
+    killswitch_start
+    CHANNEL="$2"
+    prefix="PRIVMSG $CHANNEL :$NAME: "
+    set -- "${@:4}"
+    ;;
+  # channel message, filters
+  "PRIVMSG "*" :"*)
+    killswitch_start
+    CHANNEL="$2"
+    run_filters "${3#:}" "${@:4}" | while IFS= read -r line; do
+      send "PRIVMSG $CHANNEL :$line"
+    done&
+    continue
+    ;;
+  # The bot must wait the 005 (RPL_ISUPPORT) server apresentation line, so it doesn't send messages too early
+  "005 $nick "*)
+    if ! $initialized; then
+      echo Connected to server $HOST
+      builtin_start
+      initialized=true
+      killswitch_start
+    fi
+    ;;
+  *)
+    killswitch_start
+    continue
+    ;;
+  esac
+  #@+node:caminhante.20240809183409.1: *3* /recognize commands
+  cmd=${1#*/}
+  shift
+  #@+node:caminhante.20240809183401.1: *3* /reload and stop commands (special treatment)
+  # reload is handled specially.  we can't leave the | while read subshell
+  # hangin' during re-exec, or it will be orphaned
+  case "$cmd" in
+  reload)
+    builtin_reload "$@"
+    continue
+    ;;
+  stop)
+    builtin_stop "$@"
+    ;;
+  esac
+  #@+node:caminhante.20240809183345.1: *3* /builtin commands
+  # note, builtin commands run in-process
+  ( if [ -n "${builtin_commands[$cmd]}" ]; then
+    "${builtin_commands[$cmd]}" "$@"
+  elif [ -x "${CMD_DIR}/commands/$cmd" ]; then
+    "${CMD_DIR}/commands/$cmd" "$@"
+  fi | while IFS= read -r line; do
+    send "${prefix}${line}"
+    shell_sleep 0.3
+  done )&
+  #@-others
 done <&3
+#@-others
+#@-leo

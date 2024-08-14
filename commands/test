@@ -1,0 +1,8 @@
+#!/bin/bash
+# Interpreta corretamente as aspas em argumentos:
+readarray -t ARGS < <(awk 'BEGIN{FPAT="([^ ]*)|\"([^\"]+)\""} {for(i=1;i<=NF;i++) print $i}' <<< "${LINE#*/}" | sed 's/^"//; s/"$//;')
+set -- "${ARGS[@]:1}"
+
+for var; do
+  echo "*${var}*"
+done
